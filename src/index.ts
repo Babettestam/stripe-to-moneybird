@@ -1,17 +1,17 @@
 import dotenv from "dotenv";
 import Stripe from "stripe";
 import axios from "axios";
+import fs from "fs";
 
 dotenv.config();
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
 const MONEYBIRD_API_TOKEN = process.env.MONEYBIRD_API_TOKEN || "";
-const ADMINISTRATION_ID = process.env.MONEYBIRD_ADMINISTRATION_ID || "";
+const MONEYBIRD_ADMINISTRATION_ID =
+  process.env.MONEYBIRD_ADMINISTRATION_ID || "";
 const MONEYBIRD_TAX_RATE_ID = process.env.MONEYBIRD_TAX_RATE_ID || "";
-
-if (!STRIPE_SECRET_KEY || !MONEYBIRD_API_TOKEN || !ADMINISTRATION_ID) {
-  throw new Error("Environment variables are missing. Check your .env file.");
-}
+const LAST_UPLOADED_TIMESTAMP_FILE = "./last_uploaded_timestamp.txt";
+const PAYMENTS_LIMIT = 100; // Stripe max is 100
 
 const stripe = new Stripe(STRIPE_SECRET_KEY);
 
@@ -46,9 +46,31 @@ interface MoneybirdContact {
   zipcode?: string;
 }
 
-async function fetchStripePayments(): Promise<StripePayment[]> {
+// Retrieve the last uploaded timestamp
+function getLastUploadedTimestamp(): number {
+  if (fs.existsSync(LAST_UPLOADED_TIMESTAMP_FILE)) {
+    const timestamp = fs.readFileSync(LAST_UPLOADED_TIMESTAMP_FILE, "utf-8");
+    return parseInt(timestamp, 10);
+  }
+  return 0; // Default to 0 if no timestamp exists
+}
+
+// Update the last uploaded timestamp
+function updateLastUploadedTimestamp(timestamp: number): void {
+  console.log(`Updating the last uploaded timestamp to: ${timestamp}`);
+  fs.writeFileSync(LAST_UPLOADED_TIMESTAMP_FILE, (timestamp + 1).toString());
+}
+
+// Fetch Stripe payments since the last uploaded timestamp
+async function fetchStripePaymentsSince(
+  lastTimestamp: number
+): Promise<StripePayment[]> {
   try {
-    const payments = await stripe.paymentIntents.list({ limit: 10 });
+    const payments = await stripe.paymentIntents.list({
+      created: { gte: lastTimestamp }, // Fetch payments created since the last timestamp
+      limit: PAYMENTS_LIMIT, // Adjust if needed
+    });
+
     return payments.data.map((payment) => ({
       id: payment.id,
       amount: payment.amount,
@@ -99,7 +121,7 @@ async function findOrCreateContactInMoneybird(
   try {
     // Search for existing contact
     const response = await axios.get(
-      `${MONEYBIRD_BASE_URL}/${ADMINISTRATION_ID}/contacts.json?query=${encodeURIComponent(
+      `${MONEYBIRD_BASE_URL}/${MONEYBIRD_ADMINISTRATION_ID}/contacts.json?query=${encodeURIComponent(
         customer.email
       )}`,
       {
@@ -119,7 +141,7 @@ async function findOrCreateContactInMoneybird(
 
     // Create new contact
     const createResponse = await axios.post(
-      `${MONEYBIRD_BASE_URL}/${ADMINISTRATION_ID}/contacts.json`,
+      `${MONEYBIRD_BASE_URL}/${MONEYBIRD_ADMINISTRATION_ID}/contacts.json`,
       { contact },
       {
         headers: {
@@ -154,12 +176,11 @@ async function uploadToMoneybird(
     external_sales_invoice: {
       contact_id: contactId,
       document_date: documentDate,
-      // due_date: documentDate, // Ensure the due_date is not earlier than document_date
       reference: payment.id,
-      description: payment.description || "Stripe Payment",
+      description: payment.description || `Stripe Payment ${payment.id}`,
       details_attributes: [
         {
-          description: payment.description || "Stripe Payment",
+          description: payment.description || `Stripe Payment ${payment.id}`,
           price: payment.amount / 100, // Amounts in Stripe are in cents
           amount: 1,
           tax_rate_id: MONEYBIRD_TAX_RATE_ID,
@@ -170,7 +191,7 @@ async function uploadToMoneybird(
 
   try {
     const response = await axios.post(
-      `${MONEYBIRD_BASE_URL}/${ADMINISTRATION_ID}/external_sales_invoices.json`,
+      `${MONEYBIRD_BASE_URL}/${MONEYBIRD_ADMINISTRATION_ID}/external_sales_invoices.json`,
       externalSalesInvoice,
       {
         headers: {
@@ -183,18 +204,26 @@ async function uploadToMoneybird(
       `Uploaded to Moneybird: External Sales Invoice ID ${response.data.id}`
     );
   } catch (error: any) {
-    console.error(
+    console.warn(
       "Error uploading to Moneybird:",
       error.response?.data || error
     );
-    throw error;
   }
 }
 
 async function main() {
   try {
     console.log("Fetching Stripe payments...");
-    const payments = await fetchStripePayments();
+    const lastTimestamp = getLastUploadedTimestamp();
+
+    const payments = await fetchStripePaymentsSince(lastTimestamp);
+
+    if (payments.length === 0) {
+      console.log("No new payments to upload.");
+      return;
+    }
+
+    let latestTimestamp = lastTimestamp;
 
     for (const payment of payments) {
       if (payment.customer) {
@@ -205,6 +234,9 @@ async function main() {
           const contactId = await findOrCreateContactInMoneybird(customer);
           console.log(`Uploading payment ${payment.id} to Moneybird...`);
           await uploadToMoneybird(payment, contactId);
+
+          // Update the latest timestamp
+          latestTimestamp = Math.max(latestTimestamp, payment.created);
         } else {
           console.warn(
             `No customer found for payment ${payment.id}. Skipping.`
@@ -217,10 +249,27 @@ async function main() {
       }
     }
 
+    updateLastUploadedTimestamp(latestTimestamp);
+
     console.log("All payments uploaded successfully.");
   } catch (error) {
-    console.error("Error in main process:", error);
+    // console.error("Error in main process:", error);
   }
 }
+
+function validateEnvVariables(variables: string[]): void {
+  variables.forEach((variable) => {
+    if (!process.env[variable]) {
+      throw new Error(`Environment variable ${variable} is missing.`);
+    }
+  });
+}
+
+validateEnvVariables([
+  "STRIPE_SECRET_KEY",
+  "MONEYBIRD_API_TOKEN",
+  "MONEYBIRD_ADMINISTRATION_ID",
+  "MONEYBIRD_TAX_RATE_ID",
+]);
 
 main();
