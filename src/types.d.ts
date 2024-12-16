@@ -17,7 +17,9 @@ interface StripeCustomer {
 }
 
 interface MoneybirdContact {
-  company_name?: string;
+  company_name: string;
+  si_identifier?: string;
+  tax_number?: string;
   firstname?: string | null;
   lastname?: string;
   email?: string;

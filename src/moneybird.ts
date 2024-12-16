@@ -8,24 +8,15 @@ const MONEYBIRD_ADMINISTRATION_ID =
 const MONEYBIRD_TAX_RATE_ID = process.env.MONEYBIRD_TAX_RATE_ID || "";
 
 export async function findOrCreateContactInMoneybird(
-  customer: StripeCustomer
+  contact: MoneybirdContact
 ): Promise<string> {
-  const contact: MoneybirdContact = {
-    firstname: customer.name,
-    email: customer.email,
-    phone: customer.phone,
-    address1: customer.address?.line1 || "",
-    address2: customer.address?.line2 || "",
-    city: customer.address?.city || "",
-    country: customer.address?.country || "",
-    zipcode: customer.address?.postal_code || "",
-  };
+  const uniqueId = contact.tax_number || contact.company_name;
 
   try {
     // Search for existing contact
     const response = await axios.get(
       `${MONEYBIRD_BASE_URL}/${MONEYBIRD_ADMINISTRATION_ID}/contacts.json?query=${encodeURIComponent(
-        customer.email
+        uniqueId
       )}`,
       {
         headers: { Authorization: `Bearer ${MONEYBIRD_API_TOKEN}` },
@@ -33,11 +24,12 @@ export async function findOrCreateContactInMoneybird(
     );
 
     const existingContact = response.data.find(
-      (c: any) => c.email === customer.email
+      (c: any) => (c.tax_number || c.company_name) === uniqueId
     );
+
     if (existingContact) {
       console.log(
-        `Found existing contact for ${customer.email}: ${existingContact.id}`
+        `Found existing contact for ${contact.company_name}: ${existingContact.id}`
       );
       return existingContact.id;
     }
@@ -55,7 +47,7 @@ export async function findOrCreateContactInMoneybird(
     );
 
     console.log(
-      `Created new contact for ${customer.email}: ${createResponse.data.id}`
+      `Created new contact for ${contact.company_name}: ${createResponse.data.id}`
     );
     return createResponse.data.id;
   } catch (error: any) {

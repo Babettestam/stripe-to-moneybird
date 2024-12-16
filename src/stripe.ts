@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { StripeCustomer, StripePayment, StripeTransactionFee } from "./types";
+import { StripePayment } from "./types";
 import { PAYMENTS_LIMIT } from "./config";
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
@@ -15,7 +15,6 @@ export async function fetchStripePaymentsSince(
       created: { gte: lastTimestamp }, // Fetch payments created since the last timestamp
       limit: PAYMENTS_LIMIT, // Adjust if needed
     });
-    console.log(payments);
 
     return payments.data.map((payment) => ({
       id: payment.id,
@@ -27,25 +26,5 @@ export async function fetchStripePaymentsSince(
   } catch (error) {
     console.error("Error fetching Stripe payments:", error);
     throw error;
-  }
-}
-
-export async function fetchStripeCustomer(
-  customerId: string
-): Promise<StripeCustomer | null> {
-  try {
-    const customer = await stripe.customers.retrieve(customerId);
-    if (typeof customer !== "object" || customer.deleted) return null;
-
-    return {
-      id: customer.id,
-      email: customer.email!,
-      name: customer.name || "",
-      phone: customer.phone || "",
-      address: customer.address || null,
-    };
-  } catch (error) {
-    console.error(`Error fetching Stripe customer ${customerId}:`, error);
-    return null;
   }
 }

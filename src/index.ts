@@ -2,7 +2,7 @@ import "dotenv/config";
 import fs from "fs";
 import { LAST_UPLOADED_TIMESTAMP_FILE } from "./config";
 
-import { fetchStripeCustomer, fetchStripePaymentsSince } from "./stripe";
+import { fetchStripePaymentsSince } from "./stripe";
 import { findOrCreateContactInMoneybird, uploadToMoneybird } from "./moneybird";
 
 // Retrieve the last uploaded timestamp
@@ -26,7 +26,6 @@ async function main() {
     const lastTimestamp = getLastUploadedTimestamp();
 
     const payments = await fetchStripePaymentsSince(lastTimestamp);
-    console.log(payments);
 
     if (payments.length === 0) {
       console.log("No new payments to upload.");
@@ -35,35 +34,30 @@ async function main() {
 
     let latestTimestamp = lastTimestamp;
 
-    for (const payment of payments) {
-      if (payment.customer) {
-        console.log(`Fetching customer info for ${payment.customer}...`);
-        const customer = await fetchStripeCustomer(payment.customer);
-        if (customer) {
-          console.log(`Processing customer ${customer.email}...`);
-          const contactId = await findOrCreateContactInMoneybird(customer);
-          console.log(`Uploading payment ${payment.id} to Moneybird...`);
-          await uploadToMoneybird(payment, contactId);
+    const contactId = await findOrCreateContactInMoneybird({
+      company_name: "Stripe Payments Europe, Limited",
+      country: "Ireland",
+      city: "Dublin",
+      address1: "1 Grand Canal Street Lower",
+      tax_number: "IE3206488LH",
+    });
 
-          // Update the latest timestamp
-          latestTimestamp = Math.max(latestTimestamp, payment.created);
-        } else {
-          console.warn(
-            `No customer found for payment ${payment.id}. Skipping.`
-          );
-        }
-      } else {
-        console.warn(
-          `Payment ${payment.id} has no associated customer. Skipping.`
-        );
-      }
+    if (!contactId) {
+      console.warn(`No customer found for contact id ${contactId}. Skipping.`);
+    }
+
+    for (const payment of payments) {
+      console.log(`Uploading payment ${payment.id} to Moneybird...`);
+      await uploadToMoneybird(payment, contactId);
+      // Update the latest timestamp
+      latestTimestamp = Math.max(latestTimestamp, payment.created);
     }
 
     updateLastUploadedTimestamp(latestTimestamp);
 
     console.log("All payments uploaded successfully.");
   } catch (error) {
-    // console.error("Error in main process:", error);
+    console.error("Error in main process:", error);
   }
 }
 
