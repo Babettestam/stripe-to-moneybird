@@ -70,15 +70,16 @@ export async function uploadToMoneybird(
   const externalSalesInvoice = {
     external_sales_invoice: {
       contact_id: contactId,
-      document_date: documentDate,
+      date: documentDate,
       reference: payment.id,
+      prices_are_incl_tax: true,
       description: payment.description || `Stripe Payment ${payment.id}`,
       details_attributes: [
         {
           description: payment.description || `Stripe Payment ${payment.id}`,
           price: payment.amount / 100, // Amounts in Stripe are in cents
           amount: 1,
-          tax_rate_id: MONEYBIRD_TAX_RATE_ID,
+          tax_rate_id: MONEYBIRD_TAX_RATE_ID ?? Number(MONEYBIRD_TAX_RATE_ID),
         },
       ],
     },
@@ -100,7 +101,7 @@ export async function uploadToMoneybird(
     );
   } catch (error: any) {
     console.warn(
-      "Error uploading to Moneybird:",
+      `Error uploading to Moneybird: ${externalSalesInvoice.external_sales_invoice.reference}`,
       error.response?.data || error
     );
   }
